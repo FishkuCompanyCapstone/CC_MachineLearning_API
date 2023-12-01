@@ -1,22 +1,14 @@
 import os 
-from flask import Flask, request, jsonify, send_file
+import numpy as np
 import requests
-from google.cloud import storage
+from flask import Flask, request, jsonify
+from tensorflow.keras.models import load_model
+from tensorflow.keras.utils import load_img, img_to_array
+
 app = Flask(__name__)
+model = load_model('modelValidateFishImage.h5')
 
-@app.route('/upload-image', methods=['POST'])
-def upload_image():
-    file = request.files.get('image')
-    if not file:
-        return jsonify({'error': 'Image is required'}), 400,
-    resize_image(file,'save_img.jpg')
-    tmp_file = f'C:/Users/MSI GAMING/Documents/GitHub/CC_MachineLearning_API/img/{file.filename}'
-    file.save(tmp_file)
-    #url = gcs_upload_image(tmp_file)
-    #os.remove(tmp_file)
-    return jsonify({'url': "oke"})
-
-def resize_image(url, output_file):
+def download_image(url, output_file):
     try:
         response = requests.get(url, stream=True)
         response.raise_for_status()
@@ -27,18 +19,22 @@ def resize_image(url, output_file):
         pass
     return
 
+@app.route('/validate', methods=['POST'])
+def validate_image():
+    if 'photo_url' not in request.files:
+        return jsonify({'error': 'No image uploaded.'}), 400
+    url = request.files.get('photo_url')
+    if not url:
+        return
+    download_image(url, 'current_img.jpg')
+    img = load_img('current_img.jpg', target_size=(160, 160))
+    img_array = img_to_array(img)
+    img_array = np.expand_dims(img_array, axis=0)
+    images = np.vstack([img_array])
+    prediction = model.predict(images, batch_size=32)
+    label = 'Fish' if prediction < 0.4 else 'Not a fish'
 
-def gcs_upload_image(filename: str):
-    storage_client: storage.Client = storage.Client()
-    
-    bucket: storage.Bucket = storage_client.bucket('fishku-bucket')
-    blob: storage.Blob = bucket.blob(filename.split("/")[-1])
-    blob.upload_from_filename(filename)
-    blob.make_public()
-    public_url: str = blob.public_url
-    print(f"Image uploaded to {public_url}")
-    os.remove(filename)
-    return public_url
+    return jsonify({'prediction': label})
 
 if __name__ == '__main__':
     app.run(host='0.0.0.0', port=int(os.environ.get('PORT', 8080)))
